@@ -125,6 +125,26 @@ describe("skills install gateway", () => {
     );
   });
 
+  it("throws a clear error instead of crashing when the gateway reports no workspace", async () => {
+    // Regression: the Hermes/demo adapters return skills.status as { skills: [] }
+    // with no workspaceDir, so request.workspaceDir arrives undefined. It must
+    // surface a clear error — not crash with "Cannot read properties of undefined
+    // (reading 'trim')".
+    const call = vi.fn(async () => ({}));
+    await expect(
+      installPackagedSkillViaGatewayAgent({
+        client: { call } as unknown as GatewayClient,
+        request: {
+          packageId: "task-manager",
+          source: "openclaw-workspace",
+          workspaceDir: undefined as unknown as string,
+          managedSkillsDir: undefined as unknown as string,
+        },
+      })
+    ).rejects.toThrow(/does not expose a skills workspace/);
+    expect(call).not.toHaveBeenCalledWith("agents.create", expect.anything());
+  });
+
   it("rejects installs when the gateway reports the global root workspace", async () => {
     const call = vi.fn();
 

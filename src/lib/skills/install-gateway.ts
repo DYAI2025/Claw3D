@@ -11,8 +11,15 @@ import {
   type PackagedSkillInstallResult,
 } from "@/lib/skills/types";
 
-const normalizeRequired = (value: string, field: string): string => {
-  const trimmed = value.trim();
+const normalizeRequired = (
+  value: string | undefined | null,
+  field: string,
+): string => {
+  // The request type declares these as `string`, but at runtime a gateway/adapter
+  // can omit them (e.g. skills.status returning `{ skills: [] }` with no workspaceDir).
+  // Guard against undefined/null so we surface a clear error instead of crashing with
+  // "Cannot read properties of undefined (reading 'trim')".
+  const trimmed = value?.trim() ?? "";
   if (!trimmed) {
     throw new Error(`${field} is required.`);
   }
@@ -103,7 +110,13 @@ export const installPackagedSkillViaGatewayAgent = async (params: {
     throw new Error("Gateway-native packaged install currently supports workspace skills only.");
   }
 
-  let workspaceDir = normalizeRequired(params.request.workspaceDir, "workspaceDir");
+  const requestedWorkspaceDir = normalizeOptional(params.request.workspaceDir);
+  if (!requestedWorkspaceDir) {
+    throw new Error(
+      "This gateway does not expose a skills workspace, so packaged skills can't be installed here. Connect to an OpenClaw gateway (the Hermes, demo and custom adapters don't manage a skills workspace) to install the task-manager skill.",
+    );
+  }
+  let workspaceDir = requestedWorkspaceDir;
   if (isRootWorkspace(workspaceDir) && normalizeOptional(params.request.agentId)) {
     const recoveredWorkspace = await resolveWorkspaceFromAgentFiles(
       params.client,
