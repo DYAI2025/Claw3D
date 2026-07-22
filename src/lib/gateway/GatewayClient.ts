@@ -649,7 +649,10 @@ const isAuthError = (errorMessage: string | null): boolean => {
   );
 };
 
-const MAX_AUTO_RETRY_ATTEMPTS = 20;
+// The backoff exponent is capped at this attempt; retries do NOT stop here. The client
+// keeps retrying at MAX_RETRY_DELAY_MS so a gateway that returns after a long outage
+// reconnects on its own instead of leaving the UI stranded until a manual reload.
+const MAX_BACKOFF_ATTEMPT = 20;
 const INITIAL_RETRY_DELAY_MS = 2_000;
 const MAX_RETRY_DELAY_MS = 30_000;
 
@@ -689,7 +692,6 @@ export const resolveGatewayAutoRetryDelayMs = (params: {
   if (!params.hasConnectedOnce) return null;
   if (params.wasManualDisconnect) return null;
   if (!params.gatewayUrl.trim()) return null;
-  if (params.attempt >= MAX_AUTO_RETRY_ATTEMPTS) return null;
   if (isNonRetryableConnectErrorCode(params.connectErrorCode)) return null;
   if (params.connectErrorCode === null && isAuthError(params.errorMessage)) return null;
 
@@ -698,8 +700,11 @@ export const resolveGatewayAutoRetryDelayMs = (params: {
       ? Math.max(INITIAL_RETRY_DELAY_MS, RATE_LIMIT_RETRY_DELAY_MS)
       : INITIAL_RETRY_DELAY_MS;
 
+  // Cap the backoff exponent so the delay stays finite and holds at MAX_RETRY_DELAY_MS;
+  // retries themselves never stop (see MAX_BACKOFF_ATTEMPT).
+  const cappedAttempt = Math.min(params.attempt, MAX_BACKOFF_ATTEMPT);
   return Math.min(
-    baseDelay * Math.pow(1.5, params.attempt),
+    baseDelay * Math.pow(1.5, cappedAttempt),
     MAX_RETRY_DELAY_MS
   );
 };
@@ -1075,6 +1080,36 @@ export const useGatewayConnection = (
       return () => clearTimeout(stableTimer);
     }
   }, [status]);
+
+  // Reconnect promptly when the network comes back or the tab is refocused, instead of
+  // waiting out the remaining backoff delay. Suspended/backgrounded tabs and brief
+  // network drops are a common cause of the "connection dropped, had to reload" feel.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const reconnectIfStale = () => {
+      if (wasManualDisconnectRef.current) return;
+      if (!hasConnectedOnceRef.current) return;
+      if (!isAutoManagedAdapter(selectedAdapterType)) return;
+      if (status === "connected" || status === "connecting") return;
+      if (!gatewayUrl.trim()) return;
+      if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
+      retryAttemptRef.current = 0;
+      void connect();
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") reconnectIfStale();
+    };
+    window.addEventListener("online", reconnectIfStale);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("online", reconnectIfStale);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [connect, gatewayUrl, selectedAdapterType, status]);
 
   useEffect(() => {
     if (!settingsLoaded) return;

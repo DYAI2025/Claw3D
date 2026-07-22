@@ -2561,12 +2561,19 @@ export function RetroOffice3D({
   } | null>(null);
   const [deskActionUid, setDeskActionUid] = useState<string | null>(null);
   const [deskAssignPickerOpen, setDeskAssignPickerOpen] = useState(false);
-  // Reset editor state when the layout preset or storage namespace changes. Placed
-  // after the useState declarations above so every setter it calls is lexically
-  // declared first (avoids a use-before-declaration error / React Compiler bail-out).
-  // The synchronous resets below are an intentional "reset state on key change"; none
-  // of the reset state is in the dependency array, so there is no cascading render loop.
+  // Reset editor state ONLY when the layout preset / storage namespace actually
+  // transitions to a new value. We skip the initial mount (the useState initializers
+  // above already reflect these props) and ignore renders where the values are
+  // unchanged, so brief prop churn during navigation/hot-reload cannot wipe in-progress
+  // edits. Placed after the useState declarations so every setter it calls is lexically
+  // declared first (avoids a use-before-declaration / React Compiler bail-out).
+  const layoutResetKeyRef = useRef<string | null>(null);
   useEffect(() => {
+    const resetKey = JSON.stringify([layoutPreset, storageNamespace]);
+    if (layoutResetKeyRef.current === resetKey) return;
+    const isInitialMount = layoutResetKeyRef.current === null;
+    layoutResetKeyRef.current = resetKey;
+    if (isInitialMount) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setFurniture(
       buildInitialFurnitureLayout(storageNamespace, layoutPreset).filter(

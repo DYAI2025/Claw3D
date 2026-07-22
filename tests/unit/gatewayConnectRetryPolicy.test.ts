@@ -87,5 +87,15 @@ describe("resolveGatewayAutoRetryDelayMs", () => {
 
     expect(delay).toBe(2_000);
   });
+
+  it("keeps retrying at the capped delay during a prolonged outage (never gives up)", () => {
+    // A gateway that stays down for a long time must not permanently stop retrying —
+    // that would strand the UI until a manual page reload. Retries continue at the
+    // 30s cap instead of returning null.
+    for (const attempt of [20, 25, 100]) {
+      const delay = resolveGatewayAutoRetryDelayMs({ ...baseParams, attempt });
+      expect(delay).toBe(30_000);
+    }
+  });
 });
 

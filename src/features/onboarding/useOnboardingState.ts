@@ -4,18 +4,11 @@
  * Uses localStorage so the wizard only shows once per browser.
  * The key is scoped to the Claw3D app to avoid collisions.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback } from "react";
+
+import { useDeferredLocalStorageFlag } from "@/hooks/useDeferredLocalStorageFlag";
 
 const STORAGE_KEY = "claw3d:onboarding:completed";
-
-const readCompleted = (): boolean => {
-  if (typeof window === "undefined") return false;
-  try {
-    return window.localStorage.getItem(STORAGE_KEY) === "true";
-  } catch {
-    return false;
-  }
-};
 
 const writeCompleted = (value: boolean): void => {
   if (typeof window === "undefined") return;
@@ -40,27 +33,23 @@ export type OnboardingStateReturn = {
 };
 
 export const useOnboardingState = (): OnboardingStateReturn => {
-  const [completed, setCompleted] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    // SSR-safe: localStorage is unavailable during server render, so state starts as
-    // the `null` sentinel and we read the persisted flag after mount. A lazy useState
-    // initializer would read localStorage during the first client render and diverge
-    // from the server-rendered HTML -> hydration mismatch. The single post-mount render
-    // this rule flags is intentional and required.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setCompleted(readCompleted());
-  }, []);
+  // `null` sentinel keeps the wizard hidden until localStorage has actually been read
+  // after mount, avoiding a first-paint flash for returning users. See the hook for the
+  // SSR/hydration rationale behind the deferred read.
+  const [completed, setCompleted] = useDeferredLocalStorageFlag<boolean | null>(
+    STORAGE_KEY,
+    null,
+  );
 
   const completeOnboarding = useCallback(() => {
     setCompleted(true);
     writeCompleted(true);
-  }, []);
+  }, [setCompleted]);
 
   const resetOnboarding = useCallback(() => {
     setCompleted(false);
     writeCompleted(false);
-  }, []);
+  }, [setCompleted]);
 
   return {
     showOnboarding: completed === false,
