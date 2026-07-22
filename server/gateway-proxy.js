@@ -243,16 +243,33 @@ function createGatewayProxy(options) {
         return;
       }
 
-      const baseConnectFrame = browserHasAuth
-        ? frame
-        : {
-            ...frame,
-            params: injectAuthToken(frame.params, upstreamToken),
-          };
+      // A token-mode gateway (e.g. the clawdbot/OpenClaw fork) requires the upstream
+      // token even when the browser also sends device auth. Inject the token whenever
+      // we have one and the browser didn't send its own — previously any browser-side
+      // auth (including device auth) skipped injection, leaving the connect unauthorized.
+      const browserSentOwnToken = hasNonEmptyToken(frame.params);
+      const baseConnectFrame =
+        upstreamToken && !browserSentOwnToken
+          ? {
+              ...frame,
+              params: injectAuthToken(frame.params, upstreamToken),
+            }
+          : frame;
 
       const connectParams = isObject(baseConnectFrame.params)
         ? { ...baseConnectFrame.params }
         : {};
+
+      // When we authenticate with the upstream token, drop any browser device
+      // auth. A token-mode gateway does no device pairing and rejects device
+      // signatures it hasn't paired ("device signature invalid"), which would
+      // block the connect even though the injected token alone is sufficient.
+      // Token-mode gateways have a token; device-mode gateways don't — so this
+      // only strips device auth on exactly the gateways that ignore it anyway.
+      if (upstreamToken && !browserSentOwnToken && isObject(connectParams.device)) {
+        delete connectParams.device;
+      }
+
       const hasDeviceAuth = hasCompleteDeviceAuth(connectParams);
       const client = isObject(connectParams.client) ? { ...connectParams.client } : {};
       const clientId = typeof client.id === "string" ? client.id.trim() : "";

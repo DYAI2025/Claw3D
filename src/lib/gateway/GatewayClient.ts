@@ -121,7 +121,13 @@ const DEFAULT_UPSTREAM_GATEWAY_URL =
   process.env.NEXT_PUBLIC_GATEWAY_URL || "ws://localhost:18789";
 const INITIAL_AUTO_CONNECT_DELAY_MS = 900;
 const INITIAL_CONNECT_RETRY_DELAY_MS = 1_200;
-const OPENCLAW_CONTROL_UI_CLIENT_ID = "openclaw-control-ui";
+// The stock OpenClaw gateway's connect schema accepts "openclaw-control-ui"; the
+// clawdbot fork instead requires "clawdbot-control-ui" and rejects the stock id
+// (the two are mutually exclusive — neither gateway accepts the other's value).
+// Default to the stock id so the OSS build works against upstream OpenClaw, and
+// let deployments targeting a fork override it via env.
+const OPENCLAW_CONTROL_UI_CLIENT_ID =
+  process.env.NEXT_PUBLIC_GATEWAY_CONTROL_UI_CLIENT_ID?.trim() || "openclaw-control-ui";
 const OPENCLAW_WEBCHAT_UI_CLIENT_ID = "webchat-ui";
 
 const isAutoManagedAdapter = (adapterType: StudioGatewayAdapterType) =>
