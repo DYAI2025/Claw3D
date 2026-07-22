@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 
 import {
@@ -11,6 +10,7 @@ import {
   type FloorId,
   type FloorProvider,
 } from "@/lib/office/floors";
+import { useDeferredLocalStorageFlag } from "@/hooks/useDeferredLocalStorageFlag";
 import type { FloorRosterState } from "@/lib/office/floorRoster";
 
 const DIRECTORY_COLLAPSED_STORAGE_KEY = "claw3d.officeFloorNav.directoryCollapsed";
@@ -111,21 +111,9 @@ export function OfficeFloorNav({
     OFFICE_FLOORS.find((floor) => floor.id === displayActiveFloorId) ?? OFFICE_FLOORS[0];
   const activeRoster = floorRosterCache[activeFloor.id];
 
-  const [directoryCollapsed, setDirectoryCollapsed] = useState(false);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const stored = window.localStorage.getItem(DIRECTORY_COLLAPSED_STORAGE_KEY);
-      // SSR-safe deferred read: state defaults to `false` for the server render; a lazy
-      // useState initializer reading localStorage would mismatch the server HTML for
-      // users with a stored value -> hydration error. The post-mount setState is required.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      if (stored === "true") setDirectoryCollapsed(true);
-    } catch {
-      // localStorage may be unavailable (private mode, SSR, etc.); ignore.
-    }
-  }, []);
+  const [directoryCollapsed, setDirectoryCollapsed] = useDeferredLocalStorageFlag(
+    DIRECTORY_COLLAPSED_STORAGE_KEY,
+  );
 
   const toggleDirectoryCollapsed = () => {
     setDirectoryCollapsed((current) => {
