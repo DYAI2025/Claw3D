@@ -24,7 +24,13 @@ const securityHeaders = [
       "media-src 'self' blob: data: http: https:",
       "worker-src 'self' blob:",
       "object-src 'none'",
-      "upgrade-insecure-requests",
+      // `upgrade-insecure-requests` only helps when Studio is actually served over
+      // HTTPS. On a plain-HTTP localhost server (the default dev/local setup) it forces
+      // ws://→wss:// and http→https subresource upgrades to endpoints that have no TLS
+      // listener — which breaks the gateway WebSocket and asset loads, surfacing as
+      // "connection keeps dropping / reload needed". Only emit it when served over HTTPS
+      // (HTTPS=true, e.g. `npm run dev:https`, or a TLS-terminating deployment).
+      ...(process.env.HTTPS === "true" ? ["upgrade-insecure-requests"] : []),
     ].join("; "),
   },
   {
