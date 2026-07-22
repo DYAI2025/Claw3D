@@ -288,7 +288,7 @@ describe("useGatewayConnection", () => {
     expect(captured.clientName).toBe("openclaw-control-ui");
   });
 
-  it("does_not_auto_connect_without_a_last_known_good_state", async () => {
+  it("auto_connects_for_auto_managed_adapter_with_a_persisted_url", async () => {
     const { useGatewayConnection, captured } = await setupAndImportHook(null);
     const coordinator = {
       loadSettingsEnvelope: async () => ({
@@ -334,8 +334,17 @@ describe("useGatewayConnection", () => {
     await waitFor(() => {
       expect(screen.getByTestId("gatewayUrl")).toHaveTextContent("ws://localhost:18789");
     });
-    expect(screen.getByTestId("shouldPromptForConnect")).toHaveTextContent("yes");
-    expect(captured.url).toBeNull();
+    // Patch Hermes Phase 2 (#140): auto-managed adapters (hermes/demo/openclaw) with a
+    // persisted URL auto-connect even without a prior last-known-good state, so Studio
+    // does not fall back to the manual connect prompt.
+    expect(screen.getByTestId("shouldPromptForConnect")).toHaveTextContent("no");
+    // The connect is initiated after the small initial hermes/demo delay (~900ms).
+    await waitFor(
+      () => {
+        expect(captured.authScopeKey).toBe("ws://localhost:18789");
+      },
+      { timeout: 2000 }
+    );
   });
 
   it("uses_a_small_initial_auto_connect_delay_for_hermes_and_demo_only", async () => {
@@ -606,8 +615,17 @@ describe("useGatewayConnection", () => {
       expect(screen.getByTestId("gatewayUrl")).toHaveTextContent("ws://localhost:18789");
     });
     expect(screen.getByTestId("selectedAdapterType")).toHaveTextContent("hermes");
-    expect(screen.getByTestId("shouldPromptForConnect")).toHaveTextContent("yes");
-    expect(captured.url).toBeNull();
+    // Patch Hermes Phase 2 (#140): the selected hermes profile auto-connects, so no prompt.
+    expect(screen.getByTestId("shouldPromptForConnect")).toHaveTextContent("no");
+    // Anti-regression: auto-connect must target the SELECTED hermes gateway (18789),
+    // never the different last-known-good openclaw backend (ws://localhost:9999).
+    await waitFor(
+      () => {
+        expect(captured.authScopeKey).toBe("ws://localhost:18789");
+      },
+      { timeout: 2000 }
+    );
+    expect(captured.authScopeKey).not.toBe("ws://localhost:9999");
   });
 
   it("loads_custom_adapter_type_without_requiring_a_token", async () => {

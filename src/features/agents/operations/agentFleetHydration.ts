@@ -230,7 +230,13 @@ export async function hydrateAgentFleetFromGateway(params: {
           }
           return {
             ...agent,
-            name: recoveredName,
+            // Only overwrite the runtime-reported name when the listed name is
+            // missing or a temporary skill name. A legitimate runtime name (e.g.
+            // "Two") must be preserved as runtimeName; the recovered identity name
+            // still populates identity.name so identityName resolves correctly.
+            ...(!listedName || isTemporarySkillAgentName(listedName)
+              ? { name: recoveredName }
+              : {}),
             identity: {
               ...(agent.identity ?? {}),
               name: recoveredName,
