@@ -1,4 +1,6 @@
 import "@testing-library/jest-dom/vitest";
+import { afterEach } from "vitest";
+import { cleanup } from "@testing-library/react";
 
 const ensureLocalStorage = () => {
   if (typeof window === "undefined") return;
@@ -42,3 +44,12 @@ const ensureLocalStorage = () => {
 };
 
 ensureLocalStorage();
+
+// Unmount React trees rendered by @testing-library/react after every test. Without
+// this, a component left mounted by one test (e.g. one that fires an unawaited async
+// handler with a pending timer) can re-render and mutate shared module-level state
+// after a later test has started, causing order-dependent flakiness. cleanup() is
+// idempotent, so files that already call it themselves are unaffected.
+afterEach(() => {
+  cleanup();
+});

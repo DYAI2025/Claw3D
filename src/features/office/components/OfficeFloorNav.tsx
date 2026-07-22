@@ -117,6 +117,10 @@ export function OfficeFloorNav({
     if (typeof window === "undefined") return;
     try {
       const stored = window.localStorage.getItem(DIRECTORY_COLLAPSED_STORAGE_KEY);
+      // SSR-safe deferred read: state defaults to `false` for the server render; a lazy
+      // useState initializer reading localStorage would mismatch the server HTML for
+      // users with a stored value -> hydration error. The post-mount setState is required.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (stored === "true") setDirectoryCollapsed(true);
     } catch {
       // localStorage may be unavailable (private mode, SSR, etc.); ignore.
