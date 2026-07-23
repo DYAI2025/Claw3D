@@ -482,9 +482,23 @@ export const syncCardWithLinkedRun = (
           ? "done"
           : "review";
   const updatedAt = new Date(run.endedAt ?? run.startedAt).toISOString();
+  const assignedAgentId = card.assignedAgentId ?? run.agentId;
+  // Return the SAME reference when nothing actually changed. Callers use
+  // referential equality (`card !== prev`) to decide whether to dispatch; a
+  // fresh object every call makes that always-true and, combined with the
+  // `[agents, runLog]` effect re-running, produces an infinite update loop that
+  // OOMs the renderer at 60fps.
+  if (
+    card.status === status &&
+    card.updatedAt === updatedAt &&
+    card.lastActivityAt === updatedAt &&
+    card.assignedAgentId === assignedAgentId
+  ) {
+    return card;
+  }
   return {
     ...card,
-    assignedAgentId: card.assignedAgentId ?? run.agentId,
+    assignedAgentId,
     status,
     updatedAt,
     lastActivityAt: updatedAt,
@@ -499,6 +513,10 @@ const syncCardWithAgent = (
   const agent = agents.find((entry) => entry.agentId === card.assignedAgentId);
   if (!agent) return card;
   if (agent.awaitingUserInput && card.status !== "done") {
+    // Already blocked → return the same reference so this doesn't register as a
+    // change on every sync (otherwise the `[agents, runLog]` effect dispatches
+    // endlessly — the Date.now() fallback below would also churn every call).
+    if (card.status === "blocked") return card;
     return {
       ...card,
       status: "blocked",

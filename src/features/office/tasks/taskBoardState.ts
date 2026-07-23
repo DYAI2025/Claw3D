@@ -27,6 +27,26 @@ const compareCards = (left: TaskBoardCard, right: TaskBoardCard) => {
 export const sortTaskBoardCards = (cards: TaskBoardCard[]): TaskBoardCard[] =>
   [...cards].sort(compareCards);
 
+const taskBoardCardsEqual = (a: TaskBoardCard, b: TaskBoardCard): boolean =>
+  a.id === b.id &&
+  a.title === b.title &&
+  a.description === b.description &&
+  a.status === b.status &&
+  a.source === b.source &&
+  a.sourceEventId === b.sourceEventId &&
+  a.assignedAgentId === b.assignedAgentId &&
+  a.createdAt === b.createdAt &&
+  a.updatedAt === b.updatedAt &&
+  a.playbookJobId === b.playbookJobId &&
+  a.runId === b.runId &&
+  a.channel === b.channel &&
+  a.externalThreadId === b.externalThreadId &&
+  a.lastActivityAt === b.lastActivityAt &&
+  a.isArchived === b.isArchived &&
+  a.isInferred === b.isInferred &&
+  a.notes.length === b.notes.length &&
+  a.notes.every((note, index) => note === b.notes[index]);
+
 export const upsertTaskBoardCard = (
   cards: TaskBoardCard[],
   nextCard: TaskBoardCard,
@@ -35,6 +55,12 @@ export const upsertTaskBoardCard = (
   if (!cardId) return cards;
   const existingIndex = cards.findIndex((card) => card.id === cardId);
   if (existingIndex < 0) return sortTaskBoardCards([...cards, nextCard]);
+  // Return the SAME array reference when the card is structurally unchanged.
+  // Otherwise every upsert of an identical card (e.g. the 4s shared-task poll or
+  // playbook rebuild) produced a fresh cards array, re-triggering every
+  // state.cards-dependent effect and driving a re-render loop that pegged the
+  // CPU (and, before the syncCardWithLinkedRun fix, OOM'd the renderer) at 60fps.
+  if (taskBoardCardsEqual(cards[existingIndex], nextCard)) return cards;
   const next = [...cards];
   next[existingIndex] = nextCard;
   return sortTaskBoardCards(next);
@@ -50,17 +76,18 @@ export const taskBoardReducer = (
         cards: sortTaskBoardCards(action.preference.cards),
         selectedCardId: action.preference.selectedCardId,
       };
-    case "upsert":
-      return {
-        ...state,
-        cards: upsertTaskBoardCard(state.cards, action.card),
-      };
+    case "upsert": {
+      const cards = upsertTaskBoardCard(state.cards, action.card);
+      // Same reference → nothing changed → return the same state so useReducer
+      // bails out of the re-render (prevents the dispatch-churn loop).
+      return cards === state.cards ? state : { ...state, cards };
+    }
     case "upsertMany": {
       let cards = state.cards;
       for (const card of action.cards) {
         cards = upsertTaskBoardCard(cards, card);
       }
-      return { ...state, cards };
+      return cards === state.cards ? state : { ...state, cards };
     }
     case "update": {
       const existing = state.cards.find((card) => card.id === action.cardId);
