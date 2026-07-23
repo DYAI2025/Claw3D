@@ -341,22 +341,106 @@ export function reduceClearRunTracking(params: {
   return clearRunTrackingState(params.state, params.runId);
 }
 
+// Hard cap on how many per-run stream/bookkeeping entries we keep. The happy-path
+// deleter is clearRunTrackingState (fires on a clean terminal); this is the safety
+// net for runs that never terminate cleanly — aborted, superseded, errored, or a
+// runaway local-model run — whose full accumulated assistant/thinking text would
+// otherwise be retained forever keyed by runId and exhaust the V8 old space.
+const MAX_TRACKED_RUNS = 64;
+
+// Drop `dropKeys` then evict oldest-first down to `max`. Returns the SAME reference
+// when nothing changed so the coordinator state doesn't churn on every event.
+const pruneAndCapMap = <K, V>(
+  map: Map<K, V>,
+  dropKeys: ReadonlySet<K>,
+  max: number,
+): Map<K, V> => {
+  let next: Map<K, V> | null = null;
+  for (const key of dropKeys) {
+    if (map.has(key)) {
+      next ??= new Map(map);
+      next.delete(key);
+    }
+  }
+  if ((next ?? map).size > max) {
+    next ??= new Map(map);
+    const keys = [...next.keys()];
+    for (let i = 0; i < keys.length - max; i += 1) next.delete(keys[i]);
+  }
+  return next ?? map;
+};
+
+const pruneAndCapSet = <K>(
+  set: Set<K>,
+  dropKeys: ReadonlySet<K>,
+  max: number,
+): Set<K> => {
+  let next: Set<K> | null = null;
+  for (const key of dropKeys) {
+    if (set.has(key)) {
+      next ??= new Set(set);
+      next.delete(key);
+    }
+  }
+  if ((next ?? set).size > max) {
+    next ??= new Set(set);
+    const keys = [...next.keys()];
+    for (let i = 0; i < keys.length - max; i += 1) next.delete(keys[i]);
+  }
+  return next ?? set;
+};
+
 export function pruneRuntimeEventCoordinatorState(params: {
   state: RuntimeEventCoordinatorState;
   at: number;
 }): ReduceResult {
   const pruned = pruneClosedRuns(params.state.runtimeTerminalState, { at: params.at });
-  if (pruned.expiredRunIds.length === 0) {
-    return { state: params.state, effects: [] };
+  const s = params.state;
+  const dropKeys = new Set(pruned.expiredRunIds);
+
+  // Prune expired runIds from — and hard-cap — every per-run collection, not just
+  // runtimeTerminalState. Previously these six maps were only ever cleared by
+  // clearRunTrackingState on a clean terminal, so any run that didn't terminate
+  // cleanly leaked its full accumulated text forever (renderer old-space OOM).
+  const chatRunSeen = pruneAndCapSet(s.chatRunSeen, dropKeys, MAX_TRACKED_RUNS);
+  const assistantStreamByRun = pruneAndCapMap(s.assistantStreamByRun, dropKeys, MAX_TRACKED_RUNS);
+  const thinkingStreamByRun = pruneAndCapMap(s.thinkingStreamByRun, dropKeys, MAX_TRACKED_RUNS);
+  const thinkingStartedAtByRun = pruneAndCapMap(s.thinkingStartedAtByRun, dropKeys, MAX_TRACKED_RUNS);
+  const toolLinesSeenByRun = pruneAndCapMap(s.toolLinesSeenByRun, dropKeys, MAX_TRACKED_RUNS);
+  const historyRefreshRequestedByRun = pruneAndCapSet(
+    s.historyRefreshRequestedByRun,
+    dropKeys,
+    MAX_TRACKED_RUNS,
+  );
+
+  const terminalChanged = pruned.expiredRunIds.length > 0;
+  const mapsChanged =
+    chatRunSeen !== s.chatRunSeen ||
+    assistantStreamByRun !== s.assistantStreamByRun ||
+    thinkingStreamByRun !== s.thinkingStreamByRun ||
+    thinkingStartedAtByRun !== s.thinkingStartedAtByRun ||
+    toolLinesSeenByRun !== s.toolLinesSeenByRun ||
+    historyRefreshRequestedByRun !== s.historyRefreshRequestedByRun;
+
+  if (!terminalChanged && !mapsChanged) {
+    return { state: s, effects: [] };
   }
+
   const effects: RuntimeCoordinatorEffectCommand[] = pruned.expiredRunIds.map((runId) => ({
     kind: "cancelLifecycleFallback",
     runId,
   }));
+
   return {
     state: {
-      ...params.state,
-      runtimeTerminalState: pruned.state,
+      ...s,
+      runtimeTerminalState: terminalChanged ? pruned.state : s.runtimeTerminalState,
+      chatRunSeen,
+      assistantStreamByRun,
+      thinkingStreamByRun,
+      thinkingStartedAtByRun,
+      toolLinesSeenByRun,
+      historyRefreshRequestedByRun,
     },
     effects,
   };

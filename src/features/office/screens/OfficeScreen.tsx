@@ -11,6 +11,12 @@ import {
 import { useRouter } from "next/navigation";
 import { MessageSquare, ChevronDown, ChevronLeft, ChevronRight, Mic } from "lucide-react";
 import { RetroOffice3D } from "@/features/retro-office/RetroOffice3D";
+import {
+  bumpOfficeRender,
+  leakProbeState,
+  recordRefChange,
+  startLeakProbe,
+} from "@/lib/dev/leakProbe";
 import type { OfficeAgent } from "@/features/retro-office/core/types";
 import { RunningAvatarLoader } from "@/features/agents/components/RunningAvatarLoader";
 import { GatewayConnectScreen } from "@/features/agents/components/GatewayConnectScreen";
@@ -2829,6 +2835,16 @@ export function OfficeScreen({
     status: string;
     agentsLoaded: boolean;
   } | null>(null);
+  // Gateway events (esp. per-token streaming deltas from a continuously-active
+  // agent) are coalesced into a single office-animation-trigger update per
+  // ~120ms window. reduceOfficeAnimationTriggerEvent returns a fresh state object
+  // for every event (prune + record*Activity always allocate), so calling
+  // setOfficeTriggerState per event re-rendered the whole OfficeScreen + the heavy
+  // un-memoized RetroOffice3D scene at the event rate (~30-40/s under a live
+  // agent), churning allocation until the renderer OOM'd. Batching caps that to
+  // <=~8 renders/s regardless of event rate.
+  const pendingTriggerEventsRef = useRef<EventFrame[]>([]);
+  const triggerFlushTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (status !== "connected" || !agentsLoaded) return;
@@ -2923,13 +2939,28 @@ export function OfficeScreen({
         return next.slice(-MAX_OPENCLAW_LOG_ENTRIES);
       });
       refreshRecentTransportSessionHistory(event);
-      setOfficeTriggerState((previous) =>
-        reduceOfficeAnimationTriggerEvent({
-          state: previous,
-          event,
-          agents: stateRef.current.agents,
-        }),
-      );
+      // Coalesce animation-trigger updates: buffer the event and flush all
+      // pending events in one setOfficeTriggerState per ~120ms window.
+      pendingTriggerEventsRef.current.push(event);
+      if (triggerFlushTimerRef.current === null) {
+        triggerFlushTimerRef.current = window.setTimeout(() => {
+          triggerFlushTimerRef.current = null;
+          const pending = pendingTriggerEventsRef.current;
+          if (pending.length === 0) return;
+          pendingTriggerEventsRef.current = [];
+          setOfficeTriggerState((previous) => {
+            let nextTriggerState = previous;
+            for (const pendingEvent of pending) {
+              nextTriggerState = reduceOfficeAnimationTriggerEvent({
+                state: nextTriggerState,
+                event: pendingEvent,
+                agents: stateRef.current.agents,
+              });
+            }
+            return nextTriggerState;
+          });
+        }, 120);
+      }
       if (debugEnabled) {
         console.info("[office-debug] Gateway event.", {
           event: event.event,
@@ -2965,6 +2996,11 @@ export function OfficeScreen({
       unsubscribeEvent();
       unsubscribeGap();
       runtimeHandler.dispose();
+      if (triggerFlushTimerRef.current !== null) {
+        window.clearTimeout(triggerFlushTimerRef.current);
+        triggerFlushTimerRef.current = null;
+      }
+      pendingTriggerEventsRef.current = [];
     };
   }, [
     agentsLoaded,
@@ -3147,6 +3183,27 @@ export function OfficeScreen({
     enabled: runtimeSupportsRunLifecycle,
     agents: state.agents,
   });
+  // Dev-only leak probe: on every render record the office render rate and live
+  // structure sizes, and (once) start the 5s reporter to /api/dev/leak-probe.
+  useEffect(() => {
+    bumpOfficeRender();
+    leakProbeState.agents = state.agents.length;
+    leakProbeState.feedEvents = feedEvents.length;
+    leakProbeState.logEntries = openClawLogEntries.length;
+    leakProbeState.cards = Object.values(taskBoard.cardsByStatus ?? {}).reduce(
+      (sum, list) => sum + (Array.isArray(list) ? list.length : 0),
+      0,
+    );
+    // Which reference flips on the passive re-render loop?
+    recordRefChange("agents", state.agents);
+    recordRefChange("feedEvents", feedEvents);
+    recordRefChange("logEntries", openClawLogEntries);
+    recordRefChange("triggerState", officeTriggerState);
+    recordRefChange("cardsByStatus", taskBoard.cardsByStatus);
+    recordRefChange("status", status);
+    recordRefChange("selectedAgentId", state.selectedAgentId);
+  });
+  useEffect(() => startLeakProbe(), []);
   const standupAgentSnapshots = useMemo<StandupAgentSnapshot[]>(
     () =>
       state.agents.map((agent) => ({

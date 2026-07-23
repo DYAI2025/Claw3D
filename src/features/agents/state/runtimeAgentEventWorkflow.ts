@@ -96,6 +96,17 @@ const hasUnclosedThinkingTag = (value: string): boolean => {
   return (lastClose.index ?? -1) < (lastOpen.index ?? -1);
 };
 
+// Bound the accumulated live stream so a single non-terminating / runaway run
+// (a local model can loop and stream for minutes) can't grow one runId's text
+// without limit — it is retained in both the coordinator's per-run map and on
+// agent.streamText/thinkingTrace until a clean terminal, which a runaway run
+// never emits. The UI only needs the visible tail, so keep the last ~64k chars.
+const MAX_RUNTIME_STREAM_RAW_CHARS = 64_000;
+const capRuntimeStreamRaw = (raw: string): string =>
+  raw.length > MAX_RUNTIME_STREAM_RAW_CHARS
+    ? raw.slice(raw.length - MAX_RUNTIME_STREAM_RAW_CHARS)
+    : raw;
+
 const hasReasoningSignal = ({
   rawText,
   rawDelta,
@@ -233,6 +244,7 @@ export const planRuntimeAgentEvent = (
     } else if (rawDelta) {
       mergedRaw = mergeRuntimeStream(previousRaw, rawDelta);
     }
+    mergedRaw = capRuntimeStreamRaw(mergedRaw);
     if (mergedRaw) {
       commands.push({ kind: "setThinkingStreamRaw", runId, raw: mergedRaw });
     }
@@ -269,6 +281,7 @@ export const planRuntimeAgentEvent = (
     } else if (rawDelta) {
       mergedRaw = mergeRuntimeStream(previousRaw, rawDelta);
     }
+    mergedRaw = capRuntimeStreamRaw(mergedRaw);
     if (mergedRaw) {
       commands.push({ kind: "setAssistantStreamRaw", runId, raw: mergedRaw });
     }

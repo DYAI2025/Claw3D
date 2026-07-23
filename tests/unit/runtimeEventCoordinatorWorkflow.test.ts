@@ -4,6 +4,7 @@ import type { AgentState } from "@/features/agents/state/store";
 import {
   createRuntimeEventCoordinatorState,
   markChatRunSeen,
+  pruneRuntimeEventCoordinatorState,
   reduceClearRunTracking,
   reduceLifecycleFallbackFired,
   reduceMarkActivityThrottled,
@@ -363,5 +364,47 @@ describe("runtimeEventCoordinatorWorkflow", () => {
         at: 1301,
       },
     });
+  });
+
+  it("hard-caps per-run tracking maps so runs that never terminate cleanly cannot leak", () => {
+    const state = createRuntimeEventCoordinatorState();
+    // 100 runs whose entries are never removed by clearRunTrackingState
+    // (aborted / superseded / errored / runaway — no clean terminal).
+    for (let i = 0; i < 100; i += 1) {
+      const runId = `run-${i}`;
+      state.chatRunSeen.add(runId);
+      state.assistantStreamByRun.set(runId, `assistant ${i}`);
+      state.thinkingStreamByRun.set(runId, `thinking ${i}`);
+      state.thinkingStartedAtByRun.set(runId, i);
+      state.toolLinesSeenByRun.set(runId, new Set([`tool ${i}`]));
+      state.historyRefreshRequestedByRun.add(runId);
+    }
+
+    const { state: pruned } = pruneRuntimeEventCoordinatorState({
+      state,
+      at: 1_000_000,
+    });
+
+    // Every per-run collection is bounded (no unbounded old-space growth).
+    expect(pruned.chatRunSeen.size).toBeLessThanOrEqual(64);
+    expect(pruned.assistantStreamByRun.size).toBeLessThanOrEqual(64);
+    expect(pruned.thinkingStreamByRun.size).toBeLessThanOrEqual(64);
+    expect(pruned.thinkingStartedAtByRun.size).toBeLessThanOrEqual(64);
+    expect(pruned.toolLinesSeenByRun.size).toBeLessThanOrEqual(64);
+    expect(pruned.historyRefreshRequestedByRun.size).toBeLessThanOrEqual(64);
+
+    // Oldest evicted, newest retained.
+    expect(pruned.assistantStreamByRun.has("run-0")).toBe(false);
+    expect(pruned.assistantStreamByRun.has("run-99")).toBe(true);
+  });
+
+  it("leaves state untouched when nothing is expired or over the cap", () => {
+    const state = createRuntimeEventCoordinatorState();
+    state.assistantStreamByRun.set("run-1", "hello");
+    const { state: next } = pruneRuntimeEventCoordinatorState({
+      state,
+      at: 1_000_000,
+    });
+    expect(next).toBe(state);
   });
 });
