@@ -11,6 +11,11 @@ import {
 import { useRouter } from "next/navigation";
 import { MessageSquare, ChevronDown, ChevronLeft, ChevronRight, Mic } from "lucide-react";
 import { RetroOffice3D } from "@/features/retro-office/RetroOffice3D";
+import {
+  bumpOfficeRender,
+  leakProbeState,
+  startLeakProbe,
+} from "@/lib/dev/leakProbe";
 import type { OfficeAgent } from "@/features/retro-office/core/types";
 import { RunningAvatarLoader } from "@/features/agents/components/RunningAvatarLoader";
 import { GatewayConnectScreen } from "@/features/agents/components/GatewayConnectScreen";
@@ -3147,6 +3152,19 @@ export function OfficeScreen({
     enabled: runtimeSupportsRunLifecycle,
     agents: state.agents,
   });
+  // Dev-only leak probe: on every render record the office render rate and live
+  // structure sizes, and (once) start the 5s reporter to /api/dev/leak-probe.
+  useEffect(() => {
+    bumpOfficeRender();
+    leakProbeState.agents = state.agents.length;
+    leakProbeState.feedEvents = feedEvents.length;
+    leakProbeState.logEntries = openClawLogEntries.length;
+    leakProbeState.cards = Object.values(taskBoard.cardsByStatus ?? {}).reduce(
+      (sum, list) => sum + (Array.isArray(list) ? list.length : 0),
+      0,
+    );
+  });
+  useEffect(() => startLeakProbe(), []);
   const standupAgentSnapshots = useMemo<StandupAgentSnapshot[]>(
     () =>
       state.agents.map((agent) => ({
