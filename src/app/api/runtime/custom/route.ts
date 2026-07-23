@@ -94,8 +94,17 @@ export async function POST(request: Request) {
       },
       body: method === "POST" ? JSON.stringify(payload.body ?? {}) : undefined,
       cache: "no-store",
+      redirect: "manual",
       signal: request.signal,
     });
+    // A real runtime answers directly. A redirect means the target isn't a
+    // runtime endpoint (e.g. a self-referential URL that points back at the
+    // Studio and 307s to /office) — following it would let an HTML page
+    // masquerade as a healthy runtime and silently strand the connection on a
+    // dead "claw3d" backend. Treat any 3xx as a probe failure.
+    if (response.status >= 300 && response.status < 400) {
+      throw new Error("Custom runtime redirected instead of answering directly.");
+    }
     const text = await response.text();
     return new NextResponse(text, {
       status: response.status,

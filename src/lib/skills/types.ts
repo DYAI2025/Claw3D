@@ -1,4 +1,5 @@
 import type { GatewayClient } from "@/lib/gateway/GatewayClient";
+import { GatewayResponseError } from "@/lib/gateway/errors";
 import { readGatewayAgentFile } from "@/lib/gateway/agentFiles";
 
 export type SkillStatusConfigCheck = {
@@ -163,14 +164,36 @@ export const resolveWorkspaceFromAgentFiles = async (
   return null;
 };
 
+// Some gateways (notably the clawdbot fork) reject an `agentId` param on
+// skills.status with "unexpected property 'agentId'". Remember those clients so
+// we send the param-less form on every subsequent poll instead of failing.
+const clientsRejectingAgentIdParam = new WeakSet<GatewayClient>();
+
+const isUnexpectedAgentIdParamError = (err: unknown): boolean =>
+  err instanceof GatewayResponseError &&
+  /unexpected property\s+'?agentId'?/i.test(err.message);
+
 export const loadAgentSkillStatus = async (
   client: GatewayClient,
   agentId: string
 ): Promise<SkillStatusReport> => {
   const resolvedAgentId = resolveAgentId(agentId);
-  const report = await client.call<SkillStatusReport>("skills.status", {
-    agentId: resolvedAgentId,
-  });
+  let report: SkillStatusReport;
+  if (clientsRejectingAgentIdParam.has(client)) {
+    report = await client.call<SkillStatusReport>("skills.status", {});
+  } else {
+    try {
+      report = await client.call<SkillStatusReport>("skills.status", {
+        agentId: resolvedAgentId,
+      });
+    } catch (err) {
+      if (!isUnexpectedAgentIdParamError(err)) {
+        throw err;
+      }
+      clientsRejectingAgentIdParam.add(client);
+      report = await client.call<SkillStatusReport>("skills.status", {});
+    }
+  }
   const workspaceDir = report.workspaceDir?.trim() ?? "";
   if (!workspaceDir || !isLikelyRootWorkspace(workspaceDir)) {
     return report;

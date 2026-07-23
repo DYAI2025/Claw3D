@@ -2821,6 +2821,15 @@ export function OfficeScreen({
     prevAssistantPreviewRef.current = nextByAgentId;
   }, [agentsLoaded, state.agents]);
 
+  // Tracks the last (client, status, agentsLoaded) the trigger-state reconcile ran
+  // for, so the gateway-subscription effect below only reconciles when the
+  // subscription is genuinely (re)established — not on every render.
+  const lastTriggerReconcileRef = useRef<{
+    client: unknown;
+    status: string;
+    agentsLoaded: boolean;
+  } | null>(null);
+
   useEffect(() => {
     if (status !== "connected" || !agentsLoaded) return;
     const runtimeHandler = createGatewayRuntimeEventHandler({
@@ -2885,12 +2894,28 @@ export function OfficeScreen({
     // Run reconciliation before subscribing to events so dedup keys are
     // populated in the trigger state. This prevents stale gateway event
     // replays from setting timed room holds on page load.
-    setOfficeTriggerState((previous) =>
-      reconcileOfficeAnimationTriggerState({
-        state: previous,
-        agents: stateRef.current.agents,
-      }),
-    );
+    //
+    // Gate it on the subscription identity (client/status/agentsLoaded). This
+    // effect's dependency array includes callbacks that are recreated on every
+    // render, so it re-runs constantly; reconciling unconditionally here called
+    // setOfficeTriggerState on every render (reconcile always returns a fresh,
+    // time-dependent object), producing an infinite update loop ("Maximum update
+    // depth exceeded") that churned re-renders and leaked event listeners.
+    const previousReconcile = lastTriggerReconcileRef.current;
+    if (
+      !previousReconcile ||
+      previousReconcile.client !== client ||
+      previousReconcile.status !== status ||
+      previousReconcile.agentsLoaded !== agentsLoaded
+    ) {
+      lastTriggerReconcileRef.current = { client, status, agentsLoaded };
+      setOfficeTriggerState((previous) =>
+        reconcileOfficeAnimationTriggerState({
+          state: previous,
+          agents: stateRef.current.agents,
+        }),
+      );
+    }
     const unsubscribeEvent = client.onEvent((event) => {
       lastGatewayActivityAtRef.current = Date.now();
       setOpenClawLogEntries((previous) => {
