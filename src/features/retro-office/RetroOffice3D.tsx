@@ -2876,14 +2876,32 @@ export function RetroOffice3D({
   );
   useEffect(() => {
     const syncRenderAgentUi = () => {
-      const next: Record<string, RenderAgentUiSnapshot> = {};
-      for (const agent of renderAgentsRef.current) {
-        next[agent.id] = {
-          state: agent.state,
-          status: agent.status,
-        };
-      }
-      setRenderAgentUiById(next);
+      // Bail out when nothing actually changed. renderAgentsRef is polled every
+      // 250ms; constructing and committing a brand-new object each tick forced a
+      // re-render (and invalidated agentStatusLookup) 4x/second even while agents
+      // were idle, which drove a re-render storm + listener leak that killed the
+      // /office tab after ~2.5min. Returning the previous reference when the
+      // snapshot is unchanged lets React skip the render entirely.
+      setRenderAgentUiById((prev) => {
+        const current = renderAgentsRef.current;
+        let changed = Object.keys(prev).length !== current.length;
+        const next: Record<string, RenderAgentUiSnapshot> = {};
+        for (const agent of current) {
+          next[agent.id] = {
+            state: agent.state,
+            status: agent.status,
+          };
+          const previous = prev[agent.id];
+          if (
+            !previous ||
+            previous.state !== agent.state ||
+            previous.status !== agent.status
+          ) {
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
     };
 
     syncRenderAgentUi();
