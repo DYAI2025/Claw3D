@@ -22,6 +22,18 @@ export const bumpOfficeRender = (): void => {
   if (ENABLED) renderCount += 1;
 };
 
+// Diagnostic: count how often each tracked value's REFERENCE changes between
+// renders. Whichever counter climbs at the render rate is the loop's driver.
+const refPrev = new Map<string, unknown>();
+const refChangeCount: Record<string, number> = {};
+export const recordRefChange = (name: string, value: unknown): void => {
+  if (!ENABLED) return;
+  if (refPrev.has(name) && refPrev.get(name) !== value) {
+    refChangeCount[name] = (refChangeCount[name] ?? 0) + 1;
+  }
+  refPrev.set(name, value);
+};
+
 type MaybeMemory = {
   memory?: { usedJSHeapSize: number; totalJSHeapSize: number; jsHeapSizeLimit: number };
 };
@@ -69,7 +81,9 @@ export const startLeakProbe = (): (() => void) => {
       feedEvents: leakProbeState.feedEvents,
       logEntries: leakProbeState.logEntries,
       cards: leakProbeState.cards,
+      refChanges: { ...refChangeCount },
     };
+    for (const key of Object.keys(refChangeCount)) refChangeCount[key] = 0;
     void fetch("/api/dev/leak-probe", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

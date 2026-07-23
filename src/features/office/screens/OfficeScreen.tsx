@@ -14,6 +14,7 @@ import { RetroOffice3D } from "@/features/retro-office/RetroOffice3D";
 import {
   bumpOfficeRender,
   leakProbeState,
+  recordRefChange,
   startLeakProbe,
 } from "@/lib/dev/leakProbe";
 import type { OfficeAgent } from "@/features/retro-office/core/types";
@@ -3163,6 +3164,14 @@ export function OfficeScreen({
       (sum, list) => sum + (Array.isArray(list) ? list.length : 0),
       0,
     );
+    // Which reference flips on the passive re-render loop?
+    recordRefChange("agents", state.agents);
+    recordRefChange("feedEvents", feedEvents);
+    recordRefChange("logEntries", openClawLogEntries);
+    recordRefChange("triggerState", officeTriggerState);
+    recordRefChange("cardsByStatus", taskBoard.cardsByStatus);
+    recordRefChange("status", status);
+    recordRefChange("selectedAgentId", state.selectedAgentId);
   });
   useEffect(() => startLeakProbe(), []);
   const standupAgentSnapshots = useMemo<StandupAgentSnapshot[]>(
